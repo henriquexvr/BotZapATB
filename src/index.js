@@ -99,8 +99,8 @@ async function connectToWhatsApp() {
       console.log(`----------------\n`);
     }
 
-    if (msgBody.startsWith('#player ')) {
-      const input = text.replace(/#player /i, '').trim();
+    if (msgBody.startsWith('!player ')) {
+      const input = text.replace(/!player /i, '').trim();
       const parts = input.split('#');
       const gameName = parts[0];
       const tagLine = parts[1] || 'BR1';
@@ -126,14 +126,14 @@ async function connectToWhatsApp() {
       }
     }
     
-    if (msgBody === '#meu_id') {
+    if (msgBody === '!meu_id') {
       await sock.sendMessage(from, { text: `O ID desta conversa/grupo é: ${from}` });
     }
 
-    if (msgBody === '#roast_ultimo') {
+    if (msgBody === '!roast_ultimo') {
       const data = await loadData();
       if (data.players.length === 0) {
-        await sock.sendMessage(from, { text: "Nenhum jogador está sendo vigiado ainda. Use #player Nick#Tag para adicionar." });
+        await sock.sendMessage(from, { text: "Nenhum jogador está sendo vigiado ainda. Use !player Nick#Tag para adicionar." });
         return;
       }
 
@@ -182,7 +182,7 @@ async function connectToWhatsApp() {
       }
     }
 
-    if (msgBody === '#stats_30') {
+    if (msgBody === '!stats_30') {
       const data = await loadData();
       if (data.players.length === 0) {
         await sock.sendMessage(from, { text: "Nenhum jogador vigiado." });
