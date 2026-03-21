@@ -21,9 +21,24 @@ async function getPuuid(gameName, tagLine) {
 
 async function getLatestMatchId(puuid) {
   try {
-    const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=420`;
-    const response = await riotApi.get(url);
-    return response.data[0];
+    // Busca a partida mais recente entre Solo/Duo (420) e ARAM (450)
+    const [soloRes, aramRes] = await Promise.all([
+      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=420`),
+      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=450`)
+    ]);
+
+    const soloMatch = soloRes.data[0];
+    const aramMatch = aramRes.data[0];
+
+    // Retorna o ID com o número mais alto (partida mais recente)
+    if (!soloMatch) return aramMatch;
+    if (!aramMatch) return soloMatch;
+
+    // IDs do formato BR1_XXXXXXXXXX — compara numericamente o sufixo
+    const soloNum = parseInt(soloMatch.split('_')[1]);
+    const aramNum = parseInt(aramMatch.split('_')[1]);
+
+    return soloNum > aramNum ? soloMatch : aramMatch;
   } catch (error) {
     console.error(`Error getting latest match for ${puuid}:`, error.message);
     return null;
@@ -64,9 +79,17 @@ async function getMatchDetails(matchId, puuid) {
 
 async function getMatchHistoryIds(puuid, count = 30) {
   try {
-    const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${count}&queue=420`;
-    const response = await riotApi.get(url);
-    return response.data;
+    // Busca metade de cada modo para totalizar ~count partidas
+    const half = Math.ceil(count / 2);
+    const [soloRes, aramRes] = await Promise.all([
+      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${half}&queue=420`),
+      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${half}&queue=450`)
+    ]);
+
+    // Junta e ordena pelo número do ID (mais recente primeiro)
+    const all = [...soloRes.data, ...aramRes.data];
+    all.sort((a, b) => parseInt(b.split('_')[1]) - parseInt(a.split('_')[1]));
+    return all.slice(0, count);
   } catch (error) {
     console.error(`Error getting match history for ${puuid}:`, error.message);
     return [];
