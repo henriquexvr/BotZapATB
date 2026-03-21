@@ -9,7 +9,7 @@ const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs-extra');
 const path = require('path');
-const express = require('express'); // Adicionado express
+const express = require('express');
 require('dotenv').config();
 
 const { getPuuid, getLatestMatchId, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank } = require('./riot');
@@ -58,7 +58,6 @@ async function connectToWhatsApp() {
       console.log('\n--- ESCANEIE O QR CODE ABAIXO ---');
       qrcode.generate(qr, { small: true }); 
       
-      // Gera um link para ver o QR Code como imagem (mais fácil para logs da web)
       const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`;
       console.log('\nOU ACESSE ESTE LINK PARA VER A IMAGEM DO QR CODE:');
       console.log(qrImageUrl);
@@ -77,11 +76,10 @@ async function connectToWhatsApp() {
 
   sock.ev.on('messages.upsert', async (m) => {
     const msg = m.messages[0];
-    if (!msg.message) return; // Removi o check de fromMe para permitir testes do próprio número
+    if (!msg.message) return;
 
     const from = msg.key.remoteJid;
     
-    // Extrator de texto robusto
     const text = msg.message.conversation || 
                  msg.message.extendedTextMessage?.text || 
                  msg.message.imageMessage?.caption || 
@@ -103,7 +101,12 @@ async function connectToWhatsApp() {
       const input = text.replace(/!player /i, '').trim();
       const parts = input.split('#');
       const gameName = parts[0];
-      const tagLine = parts[1] || 'BR1';
+      const tagLine = parts[1]; // ALTERADO: removido || 'BR1' para não assumir tag errada
+
+      if (!tagLine) {
+        await sock.sendMessage(from, { text: `❌ Formato incorreto! Use: !player Nick#Tag\nExemplo: !player Faker#KR1` });
+        return;
+      }
 
       try {
         await sock.sendMessage(from, { text: `Buscando jogador ${gameName}#${tagLine}...` });
@@ -122,7 +125,7 @@ async function connectToWhatsApp() {
           await sock.sendMessage(from, { text: `❌ Não encontrei esse jogador. Verifique Nick#Tag.` });
         }
       } catch (e) {
-        console.error("Erro ao processar #player:", e.message);
+        console.error("Erro ao processar !player:", e.message);
       }
     }
     
@@ -137,7 +140,7 @@ async function connectToWhatsApp() {
         return;
       }
 
-      await sock.sendMessage(from, { text: "Buscando as últimas partidas de Solo/Duo... 🔍" });
+      await sock.sendMessage(from, { text: "Buscando as últimas partidas de Solo/Duo e ARAM... 🔍" }); // ALTERADO
 
       const losses = [];
       const winners = [];
@@ -149,7 +152,6 @@ async function connectToWhatsApp() {
 
           const match = await getMatchDetails(latestMatchId, player.puuid);
           if (match) {
-            // Tenta pegar o rank, mas se der erro (403), continua sem ele
             let rank = null;
             try {
               rank = await getSummonerRank(player.puuid);
@@ -225,7 +227,6 @@ async function startPolling(sock) {
         const latestMatchId = await getLatestMatchId(player.puuid);
         if (!latestMatchId) continue;
 
-        // Se for a primeira vez vendo este player, apenas registra o match ID sem postar
         if (!data.lastMatchIds[player.puuid]) {
           console.log(`Inicializando match ID para ${player.name}: ${latestMatchId}`);
           data.lastMatchIds[player.puuid] = latestMatchId;
@@ -253,7 +254,6 @@ async function startPolling(sock) {
             console.log(`Roast automático enviado para ${target}`);
           }
 
-          // Atualiza o ID da última partida vista para não repetir
           data.lastMatchIds[player.puuid] = latestMatchId;
           await saveData(data);
         }
