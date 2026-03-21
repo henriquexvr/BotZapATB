@@ -1,0 +1,7 @@
+node_modules
+auth_info_baileys
+tokens
+data.json
+.env
+test_riot.js
+*.log
