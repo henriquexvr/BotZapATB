@@ -1,214 +1,267 @@
-const axios = require('axios');
+const {
+  default: makeWASocket,
+  useMultiFileAuthState,
+  DisconnectReason,
+  fetchLatestBaileysVersion,
+  delay
+} = require('@whiskeysockets/baileys');
+const pino = require('pino');
+const qrcode = require('qrcode-terminal');
+const fs = require('fs-extra');
+const path = require('path');
+const express = require('express');
+require('dotenv').config();
 
-const RIOT_API_KEY = process.env.RIOT_API_KEY;
-const REGION = 'americas';
-const PLATFORM = 'br1';
+const { getPuuid, getLatestMatchId, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank } = require('./riot');
+const { generateRoast, generateWinRateSummary, generateMultiRoast } = require('./gemini');
 
-// Cache para evitar requisições repetidas
-const matchCache = new Map();
-const MAX_CACHE_SIZE = 500;
+// Servidor Health Check para o Railway não derrubar o bot
+const app = express();
+const port = process.env.PORT || 3000;
+app.get('/', (req, res) => res.send('Bot is running!'));
+app.listen(port, () => console.log(`Health check server on port ${port}`));
 
-// Função de delay
-const delay = (ms) => new Promise(resolve => setTimeout(resolve, ms));
+// Caminho para a pasta de persistência (Railway Volumes)
+const PERSIST_PATH = process.env.NODE_ENV === 'production' ? '/app/persist' : path.join(__dirname, '../persist');
+if (!fs.existsSync(PERSIST_PATH)) fs.mkdirSync(PERSIST_PATH, { recursive: true });
 
-// Função para limpar cache quando ficar muito grande
-function cleanCache() {
-  if (matchCache.size > MAX_CACHE_SIZE) {
-    const firstKey = matchCache.keys().next().value;
-    matchCache.delete(firstKey);
+const DATA_PATH = path.join(PERSIST_PATH, 'data.json');
+
+async function loadData() {
+  if (await fs.pathExists(DATA_PATH)) {
+    return await fs.readJson(DATA_PATH);
   }
+  return { players: [], lastMatchIds: {} };
 }
 
-// Função com retry e backoff exponencial
-async function fetchWithRetry(url, retries = 3) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      await delay(1200); // Delay de 1.2s antes de cada requisição
+async function saveData(data) {
+  await fs.writeJson(DATA_PATH, data, { spaces: 2 });
+}
+
+async function connectToWhatsApp() {
+  const authPath = path.join(PERSIST_PATH, 'auth_info_baileys');
+  const { state, saveCreds } = await useMultiFileAuthState(authPath);
+  const { version } = await fetchLatestBaileysVersion();
+
+  const sock = makeWASocket({
+    version,
+    auth: state,
+    logger: pino({ level: 'silent' }),
+  });
+
+  sock.ev.on('creds.update', saveCreds);
+
+  sock.ev.on('connection.update', (update) => {
+    const { connection, lastDisconnect, qr } = update;
+
+    if (qr) {
+      console.log('\n--- ESCANEIE O QR CODE ABAIXO ---');
+      qrcode.generate(qr, { small: true }); 
       
-      const response = await axios.get(url, {
-        headers: { 'X-Riot-Token': RIOT_API_KEY },
-        timeout: 10000
-      });
-      return response.data;
-    } catch (error) {
-      if (error.response?.status === 429) {
-        const waitTime = Math.pow(2, i) * 3000; // 3s, 6s, 12s
-        console.log(`⏳ Rate limit atingido. Aguardando ${waitTime/1000}s antes de tentar novamente...`);
-        await delay(waitTime);
-        continue;
-      }
-      
-      if (error.response?.status === 503 || error.response?.status === 500) {
-        const waitTime = 2000 * (i + 1);
-        console.log(`⚠️ Servidor indisponível. Aguardando ${waitTime/1000}s...`);
-        await delay(waitTime);
-        continue;
-      }
-      
-      throw error;
-    }
-  }
-  throw new Error('❌ Máximo de tentativas atingido');
-}
-
-async function getPuuid(gameName, tagLine) {
-  try {
-    const url = `https://${REGION}.api.riotgames.com/riot/account/v1/accounts/by-riot-id/${encodeURIComponent(gameName)}/${encodeURIComponent(tagLine)}`;
-    const data = await fetchWithRetry(url);
-    return data.puuid;
-  } catch (error) {
-    console.error(`Erro ao buscar PUUID para ${gameName}#${tagLine}:`, error.message);
-    return null;
-  }
-}
-
-async function getLatestMatchId(puuid) {
-  try {
-    const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=420`; // ARAM removido, mantém apenas Solo/Duo
-    const matches = await fetchWithRetry(url);
-    return matches.length > 0 ? matches[0] : null;
-  } catch (error) {
-    console.error('Erro ao buscar última partida:', error.message);
-    return null;
-  }
-}
-
-async function getMatchHistoryIds(puuid, count = 15) {
-  try {
-    const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${count}&queue=420`; // Apenas Solo/Duo
-    const matches = await fetchWithRetry(url);
-    return matches || [];
-  } catch (error) {
-    console.error('Erro ao buscar histórico de partidas:', error.message);
-    return [];
-  }
-}
-
-async function getMatchDetails(matchId, puuid) {
-  try {
-    // Verifica cache primeiro
-    if (matchCache.has(matchId)) {
-      const cached = matchCache.get(matchId);
-      return cached[puuid] || null;
+      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`;
+      console.log('\nOU ACESSE ESTE LINK PARA VER A IMAGEM DO QR CODE:');
+      console.log(qrImageUrl);
+      console.log('---------------------------------\n');
     }
 
-    const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${matchId}`;
-    const data = await fetchWithRetry(url);
-
-    if (!data || !data.info || !data.info.participants) {
-      return null;
+    if (connection === 'close') {
+      const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
+      console.log('Conexão fechada. Reconectando...', shouldReconnect);
+      if (shouldReconnect) connectToWhatsApp();
+    } else if (connection === 'open') {
+      console.log('WhatsApp Bot conectado (Baileys)!');
+      startPolling(sock);
     }
+  });
 
-    const participant = data.info.participants.find(p => p.puuid === puuid);
-    if (!participant) return null;
+  sock.ev.on('messages.upsert', async (m) => {
+    const msg = m.messages[0];
+    if (!msg.message) return;
 
-    const result = {
-      win: participant.win,
-      champion: participant.championName,
-      kills: participant.kills,
-      deaths: participant.deaths,
-      assists: participant.assists,
-      kda: participant.challenges?.kda || 0,
-      cs: participant.totalMinionsKilled + participant.neutralMinionsKilled,
-      gold: participant.goldEarned,
-      damage: participant.totalDamageDealtToChampions,
-      gameMode: data.info.gameMode,
-      gameDuration: Math.floor(data.info.gameDuration / 60)
-    };
-
-    // Salva no cache
-    cleanCache();
-    if (!matchCache.has(matchId)) {
-      matchCache.set(matchId, {});
-    }
-    matchCache.get(matchId)[puuid] = result;
-
-    return result;
-  } catch (error) {
-    console.error(`Erro ao buscar detalhes da partida ${matchId}:`, error.message);
-    return null;
-  }
-}
-
-async function getWinRateStats(puuid, matchIds) {
-  let wins = 0;
-  let losses = 0;
-  const champStats = {};
-
-  console.log(`📊 Analisando ${matchIds.length} partidas...`);
-
-  for (let i = 0; i < matchIds.length; i++) {
-    const matchId = matchIds[i];
-    try {
-      const match = await getMatchDetails(matchId, puuid);
-      if (!match) continue;
-
-      if (match.win) wins++;
-      else losses++;
-
-      if (!champStats[match.champion]) {
-        champStats[match.champion] = { wins: 0, losses: 0, games: 0 };
-      }
-      champStats[match.champion].games++;
-      if (match.win) champStats[match.champion].wins++;
-      else champStats[match.champion].losses++;
-
-      // Mostra progresso
-      if ((i + 1) % 5 === 0) {
-        console.log(`   ✓ ${i + 1}/${matchIds.length} partidas analisadas`);
-      }
-    } catch (err) {
-      console.error(`Erro ao processar partida ${matchId}:`, err.message);
-    }
-  }
-
-  console.log(`✅ Análise completa: ${wins}V ${losses}D`);
-
-  return { wins, losses, champStats };
-}
-
-async function getSummonerRank(puuid) {
-  try {
-    // Primeiro pega o summonerId
-    const accountUrl = `https://${PLATFORM}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`;
-    const accountData = await fetchWithRetry(accountUrl);
+    const from = msg.key.remoteJid;
     
-    if (!accountData || !accountData.id) {
-      return null;
+    const text = msg.message.conversation || 
+                 msg.message.extendedTextMessage?.text || 
+                 msg.message.imageMessage?.caption || 
+                 msg.message.videoMessage?.caption || 
+                 msg.message.buttonsResponseMessage?.selectedButtonId || 
+                 msg.message.listResponseMessage?.singleSelectReply?.selectedRowId ||
+                 '';
+                 
+    const msgBody = text.toLowerCase().trim();
+
+    if (text) {
+      console.log(`\n[NOVA MENSAGEM]`);
+      console.log(`De: ${from}`);
+      console.log(`Texto: ${text}`);
+      console.log(`----------------\n`);
     }
 
-    // Depois pega o rank
-    const rankUrl = `https://${PLATFORM}.api.riotgames.com/lol/league/v4/entries/by-summoner/${accountData.id}`;
-    const rankData = await fetchWithRetry(rankUrl);
+    if (msgBody.startsWith('!player ')) {
+      const input = text.replace(/!player /i, '').trim();
+      const parts = input.split('#');
+      const gameName = parts[0];
+      const tagLine = parts[1]; // ALTERADO: removido || 'BR1' para não assumir tag errada
 
-    if (!rankData || rankData.length === 0) {
-      return null;
+      if (!tagLine) {
+        await sock.sendMessage(from, { text: `❌ Formato incorreto! Use: !player Nick#Tag\nExemplo: !player Faker#KR1` });
+        return;
+      }
+
+      try {
+        await sock.sendMessage(from, { text: `Buscando jogador ${gameName}#${tagLine}...` });
+        const puuid = await getPuuid(gameName, tagLine);
+        
+        if (puuid) {
+          const data = await loadData();
+          if (data.players.some(p => p.puuid === puuid)) {
+            await sock.sendMessage(from, { text: `Já estou acompanhando ${gameName}#${tagLine}!` });
+            return;
+          }
+          data.players.push({ name: gameName, tag: tagLine, puuid });
+          await saveData(data);
+          await sock.sendMessage(from, { text: `✅ Agora estou vigiando as derrotas de ${gameName}#${tagLine}!` });
+        } else {
+          await sock.sendMessage(from, { text: `❌ Não encontrei esse jogador. Verifique Nick#Tag.` });
+        }
+      } catch (e) {
+        console.error("Erro ao processar !player:", e.message);
+      }
+    }
+    
+    if (msgBody === '!meu_id') {
+      await sock.sendMessage(from, { text: `O ID desta conversa/grupo é: ${from}` });
     }
 
-    // Procura rank de Solo/Duo
-    const soloRank = rankData.find(r => r.queueType === 'RANKED_SOLO_5x5');
-    if (soloRank) {
-      return {
-        tier: soloRank.tier,
-        rank: soloRank.rank,
-        lp: soloRank.leaguePoints,
-        wins: soloRank.wins,
-        losses: soloRank.losses
-      };
+    if (msgBody === '!roast_ultimo') {
+      const data = await loadData();
+      if (data.players.length === 0) {
+        await sock.sendMessage(from, { text: "Nenhum jogador está sendo vigiado ainda. Use !player Nick#Tag para adicionar." });
+        return;
+      }
+
+      await sock.sendMessage(from, { text: "Buscando as últimas partidas de Solo/Duo e ARAM... 🔍" }); // ALTERADO
+
+      const losses = [];
+      const winners = [];
+
+      for (const player of data.players) {
+        try {
+          const latestMatchId = await getLatestMatchId(player.puuid);
+          if (!latestMatchId) continue;
+
+          const match = await getMatchDetails(latestMatchId, player.puuid);
+          if (match) {
+            let rank = null;
+            try {
+              rank = await getSummonerRank(player.puuid);
+            } catch (e) {
+              console.log(`Não foi possível obter rank para ${player.name}, continuando sem elo.`);
+            }
+
+            if (!match.win) {
+              losses.push({ name: player.name, match, rank });
+            } else {
+              winners.push(player.name);
+            }
+          }
+        } catch (err) {
+          console.error(`Erro no roast_ultimo para ${player.name}:`, err.message);
+        }
+      }
+
+      if (losses.length > 0) {
+        const roast = await generateMultiRoast(losses);
+        await sock.sendMessage(from, { text: `🔥 *BOLETIM DA VERGONHA* 🔥\n\n${roast}` });
+      }
+
+      if (winners.length > 0) {
+        await sock.sendMessage(from, { text: `😒 Vencedores do momento (sem graça): ${winners.join(', ')}` });
+      }
+
+      if (losses.length === 0 && winners.length === 0) {
+        await sock.sendMessage(from, { text: "Não encontrei partidas recentes para ninguém." });
+      }
     }
 
-    return null;
-  } catch (error) {
-    console.error('Erro ao buscar rank:', error.message);
-    return null;
-  }
+    if (msgBody === '!stats_30') {
+      const data = await loadData();
+      if (data.players.length === 0) {
+        await sock.sendMessage(from, { text: "Nenhum jogador vigiado." });
+        return;
+      }
+
+      await sock.sendMessage(from, { text: "Analisando as últimas 30 partidas de todos... segura o coração! 📊" });
+
+      for (const player of data.players) {
+        try {
+          const matchIds = await getMatchHistoryIds(player.puuid, 30);
+          if (matchIds.length === 0) continue;
+
+          const stats = await getWinRateStats(player.puuid, matchIds);
+          if (stats) {
+            const summary = await generateWinRateSummary(player.name, stats);
+            await sock.sendMessage(from, { text: `📊 *Relatório de Performance: ${player.name}*\n\n${summary}` });
+          }
+        } catch (err) {
+          console.error(`Erro no stats_30 para ${player.name}:`, err.message);
+        }
+      }
+    }
+  });
 }
 
-module.exports = {
-  getPuuid,
-  getLatestMatchId,
-  getMatchDetails,
-  getMatchHistoryIds,
-  getWinRateStats,
-  getSummonerRank
-};
+async function startPolling(sock) {
+  console.log('Starting match polling loop...');
+  setInterval(async () => {
+    const data = await loadData();
+    const target = process.env.WHATSAPP_TARGET;
+
+    if (!target || target === 'COLOCAR_ID_AQUI') {
+      console.log('WHATSAPP_TARGET not set in .env.');
+      return;
+    }
+
+    for (const player of data.players) {
+      try {
+        const latestMatchId = await getLatestMatchId(player.puuid);
+        if (!latestMatchId) continue;
+
+        if (!data.lastMatchIds[player.puuid]) {
+          console.log(`Inicializando match ID para ${player.name}: ${latestMatchId}`);
+          data.lastMatchIds[player.puuid] = latestMatchId;
+          await saveData(data);
+          continue;
+        }
+
+        const lastSeen = data.lastMatchIds[player.puuid];
+
+        if (latestMatchId !== lastSeen) {
+          console.log(`Nova partida detectada para ${player.name}: ${latestMatchId}`);
+          const match = await getMatchDetails(latestMatchId, player.puuid);
+
+          if (match && !match.win) {
+            console.log(`A partida foi uma DERROTA para ${player.name}. Gerando roast...`);
+            let rank = null;
+            try {
+              rank = await getSummonerRank(player.puuid);
+            } catch (e) {
+              console.log("Erro ao buscar rank no polling automático.");
+            }
+            
+            const roast = await generateRoast(player.name, match, rank);
+            await sock.sendMessage(target, { text: roast });
+            console.log(`Roast automático enviado para ${target}`);
+          }
+
+          data.lastMatchIds[player.puuid] = latestMatchId;
+          await saveData(data);
+        }
+      } catch (err) {
+        console.error(`Erro no monitoramento de ${player.name}:`, err.message);
+      }
+    }
+  }, process.env.POLLING_INTERVAL || 600000);
+}
+
+connectToWhatsApp();
