@@ -1,0 +1,20 @@
+services:
+  - type: web
+    name: atblolbot
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: RIOT_API_KEY
+        sync: false
+      - key: GEMINI_API_KEY
+        sync: false
+      - key: WHATSAPP_TARGET
+        sync: false
+      - key: POLLING_INTERVAL
+        value: "600000"
+    disks:
+      - name: persist
+        mountPath: /app/persist
+        sizeGB: 1

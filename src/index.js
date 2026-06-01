@@ -16,13 +16,13 @@ require('dotenv').config();
 const { getPuuid, getLatestMatchIds, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank } = require('./riot');
 const { generateRoast, generateWinRateSummary, generateMultiRoast } = require('./gemini');
 
-// Servidor Health Check para o Railway não derrubar o bot
+// Servidor Health Check para o Render não derrubar o bot
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 3000;
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(port, () => console.log(`Health check server on port ${port}`));
 
-// Caminho para a pasta de persistência (Railway Volumes)
+// Caminho para a pasta de persistência (Render Disks)
 const PERSIST_PATH = process.env.NODE_ENV === 'production' ? '/app/persist' : path.join(__dirname, '../persist');
 if (!fs.existsSync(PERSIST_PATH)) fs.mkdirSync(PERSIST_PATH, { recursive: true });
 
