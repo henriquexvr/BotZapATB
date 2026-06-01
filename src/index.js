@@ -114,8 +114,8 @@ async function connectToWhatsApp() {
       const gameName = parts[0];
       const tagLine = parts[1];
 
-      if (!gameName || !tagLine || gameName.length > 16 || tagLine.length > 5 || !/^[a-zA-Z0-9\u00C0-\u00FF]+$/.test(gameName) || !/^[a-zA-Z0-9\u00C0-\u00FF]+$/.test(tagLine)) {
-        await sock.sendMessage(from, { text: '❌ Formato inválido! Use: !player Nick#Tag\nExemplo: !player Faker#KR1\n(Apenas letras, números e acentos, máx. 16/5 caracteres)' });
+      if (!gameName || !tagLine) {
+        await sock.sendMessage(from, { text: '❌ Formato inválido! Use: !player Nick#Tag\nExemplo: !player Faker#KR1' });
         return;
       }
 
