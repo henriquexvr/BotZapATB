@@ -24,7 +24,7 @@ app.get('/ping', (req, res) => res.send('pong'));
 app.get('/qr', async (req, res) => {
   if (currentQR) {
     res.setHeader('Content-Type', 'text/html');
-    res.send(`<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111"><img src="data:image/png;base64,${currentQR}" /></body></html>`);
+    res.send(`<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111"><img src="${currentQR}" /></body></html>`);
   } else {
     res.send('QR Code não disponível. Aguarde ou escaneie.');
   }
