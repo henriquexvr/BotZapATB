@@ -20,6 +20,7 @@ const { generateRoast, generateWinRateSummary, generateMultiRoast } = require('.
 const app = express();
 const port = parseInt(process.env.PORT, 10) || 3000;
 app.get('/', (req, res) => res.send('Bot is running!'));
+app.get('/ping', (req, res) => res.send('pong'));
 app.listen(port, () => console.log(`Health check server on port ${port}`));
 
 // Caminho para a pasta de persistência (Render Disks)
