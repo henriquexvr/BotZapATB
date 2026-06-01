@@ -1,0 +1,8 @@
+.env
+test_riot.js
+persist/
+auth_info_baileys/
+node_modules
+.git
+.gitignore
+*.log

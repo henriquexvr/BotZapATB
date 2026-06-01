@@ -2,11 +2,18 @@ const axios = require('axios');
 require('dotenv').config();
 
 const API_KEY = process.env.RIOT_API_KEY;
-const REGION = 'americas'; // Adjust based on your region: americas, europe, asia, sea
+const REGION = 'americas';
 
 const riotApi = axios.create({
   headers: { 'X-Riot-Token': API_KEY }
 });
+
+const QUEUES = {
+  RANKED_SOLO: 420,
+  ARAM: 450,
+  TFT_NORMAL: 1100,
+  TFT_RANKED: 1101
+};
 
 async function getPuuid(gameName, tagLine) {
   try {
@@ -19,29 +26,25 @@ async function getPuuid(gameName, tagLine) {
   }
 }
 
-async function getLatestMatchId(puuid) {
+async function getLatestMatchIds(puuid) {
   try {
-    // Busca a partida mais recente entre Solo/Duo (420) e ARAM (450)
-    const [soloRes, aramRes] = await Promise.all([
-      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=420`),
-      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=450`)
-    ]);
+    const queueIds = Object.values(QUEUES);
+    const requests = queueIds.map(q =>
+      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=${q}`)
+    );
+    const results = await Promise.all(requests);
 
-    const soloMatch = soloRes.data[0];
-    const aramMatch = aramRes.data[0];
+    const latest = {};
+    results.forEach((res, i) => {
+      if (res.data && res.data.length > 0) {
+        latest[queueIds[i]] = res.data[0];
+      }
+    });
 
-    // Retorna o ID com o número mais alto (partida mais recente)
-    if (!soloMatch) return aramMatch;
-    if (!aramMatch) return soloMatch;
-
-    // IDs do formato BR1_XXXXXXXXXX — compara numericamente o sufixo
-    const soloNum = parseInt(soloMatch.split('_')[1]);
-    const aramNum = parseInt(aramMatch.split('_')[1]);
-
-    return soloNum > aramNum ? soloMatch : aramMatch;
+    return latest;
   } catch (error) {
-    console.error(`Error getting latest match for ${puuid}:`, error.message);
-    return null;
+    console.error(`Error getting latest matches for ${puuid}:`, error.message);
+    return {};
   }
 }
 
@@ -54,12 +57,30 @@ async function getMatchDetails(matchId, puuid) {
 
     if (!participant) return null;
 
-    // Encontrar o oponente direto (mesma posição no time oposto)
-    const opponent = info.participants.find(p => p.teamId !== participant.teamId && p.teamPosition === participant.teamPosition) || 
-                     info.participants.find(p => p.teamId !== participant.teamId); // Fallback se não achar posição exata
+    const queueId = info.queueId;
+
+    if (queueId === QUEUES.TFT_NORMAL || queueId === QUEUES.TFT_RANKED) {
+      return {
+        matchId,
+        win: participant.placement <= 4,
+        placement: participant.placement,
+        champion: participant.characters?.[0]?.character_name || 'Desconhecido',
+        augments: participant.augments || [],
+        traits: (participant.traits || []).map(t => `${t.name} (${t.num_units})`),
+        totalDamage: participant.total_damage_to_players || 0,
+        goldLeft: participant.gold_left || 0,
+        units: (participant.units || []).map(u => u.character_name),
+        gameMode: 'TFT',
+        queueId,
+        timestamp: info.gameEndTimestamp
+      };
+    }
+
+    const opponent = info.participants.find(p => p.teamId !== participant.teamId && p.teamPosition === participant.teamPosition) ||
+                     info.participants.find(p => p.teamId !== participant.teamId);
 
     return {
-      matchId: matchId,
+      matchId,
       win: participant.win,
       champion: participant.championName,
       kda: `${participant.kills}/${participant.deaths}/${participant.assists}`,
@@ -69,6 +90,7 @@ async function getMatchDetails(matchId, puuid) {
       gold: participant.goldEarned,
       damage: participant.totalDamageDealtToChampions,
       gameMode: info.gameMode,
+      queueId,
       timestamp: info.gameEndTimestamp
     };
   } catch (error) {
@@ -77,17 +99,17 @@ async function getMatchDetails(matchId, puuid) {
   }
 }
 
-async function getMatchHistoryIds(puuid, count = 30) {
+async function getMatchHistoryIds(puuid, count = 10) {
   try {
-    // Busca metade de cada modo para totalizar ~count partidas
-    const half = Math.ceil(count / 2);
-    const [soloRes, aramRes] = await Promise.all([
-      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${half}&queue=420`),
-      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${half}&queue=450`)
-    ]);
+    const perQueue = Math.ceil(count / 4) + 1;
+    const queueIds = Object.values(QUEUES);
+    const requests = queueIds.map(q =>
+      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${perQueue}&queue=${q}`)
+    );
+    const results = await Promise.all(requests);
 
-    // Junta e ordena pelo número do ID (mais recente primeiro)
-    const all = [...soloRes.data, ...aramRes.data];
+    const all = [];
+    results.forEach(res => all.push(...res.data));
     all.sort((a, b) => parseInt(b.split('_')[1]) - parseInt(a.split('_')[1]));
     return all.slice(0, count);
   } catch (error) {
@@ -102,15 +124,24 @@ async function getWinRateStats(puuid, matchIds) {
   const champions = {};
 
   try {
-    const details = await Promise.all(matchIds.map(async (id) => {
-      const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${id}`;
-      const resp = await riotApi.get(url);
-      const p = resp.data.info.participants.find(part => part.puuid === puuid);
+    const BATCH_SIZE = 10;
+    const details = [];
+    for (let i = 0; i < matchIds.length; i += BATCH_SIZE) {
+      const batch = matchIds.slice(i, i + BATCH_SIZE);
+      const batchResults = await Promise.all(batch.map(async (id) => {
+        const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${id}`;
+        const resp = await riotApi.get(url);
+        return resp.data.info.participants.find(part => part.puuid === puuid);
+      }));
+      details.push(...batchResults);
+    }
+
+    details.forEach(p => {
       if (p) {
         if (p.win) wins++; else losses++;
         champions[p.championName] = (champions[p.championName] || 0) + 1;
       }
-    }));
+    });
 
     const topChampion = Object.entries(champions).sort((a, b) => b[1] - a[1])[0];
 
@@ -129,29 +160,31 @@ async function getWinRateStats(puuid, matchIds) {
 
 async function getSummonerRank(puuid) {
   try {
-    const PLATFORM = 'br1'; 
-    // Tentando passar a chave direto na URL para evitar problemas de header em diferentes subdomínios
-    const summonerUrl = `https://${PLATFORM}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}?api_key=${API_KEY}`;
-    const summonerResp = await axios.get(summonerUrl);
+    const PLATFORM = 'br1';
+    const summonerUrl = `https://${PLATFORM}.api.riotgames.com/lol/summoner/v4/summoners/by-puuid/${puuid}`;
+    const summonerResp = await riotApi.get(summonerUrl);
     const summonerId = summonerResp.data.id;
 
-    const leagueUrl = `https://${PLATFORM}.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}?api_key=${API_KEY}`;
-    const leagueResp = await axios.get(leagueUrl);
-    
+    const leagueUrl = `https://${PLATFORM}.api.riotgames.com/lol/league/v4/entries/by-summoner/${summonerId}`;
+    const leagueResp = await riotApi.get(leagueUrl);
+
     const soloEntry = leagueResp.data.find(entry => entry.queueType === 'RANKED_SOLO_5x5');
-    
-    if (soloEntry) {
+    const tftEntry = leagueResp.data.find(entry => entry.queueType === 'RANKED_TFT');
+
+    const entry = soloEntry || tftEntry;
+
+    if (entry) {
       return {
-        tier: soloEntry.tier,
-        rank: soloEntry.rank,
-        lp: soloEntry.leaguePoints,
-        wins: soloEntry.wins,
-        losses: soloEntry.losses
+        tier: entry.tier,
+        rank: entry.rank,
+        lp: entry.leaguePoints,
+        wins: entry.wins,
+        losses: entry.losses,
+        queueType: entry.queueType
       };
     }
     return null;
   } catch (error) {
-    // Silenciando o erro 403 para não poluir o log, já que é uma restrição de chave da Riot
     if (error.response?.status !== 403) {
       console.error(`Error getting rank for ${puuid}:`, error.message);
     }
@@ -159,4 +192,4 @@ async function getSummonerRank(puuid) {
   }
 }
 
-module.exports = { getPuuid, getLatestMatchId, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank };
+module.exports = { getPuuid, getLatestMatchIds, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank };

@@ -9,15 +9,16 @@ const pino = require('pino');
 const qrcode = require('qrcode-terminal');
 const fs = require('fs-extra');
 const path = require('path');
+const os = require('os');
 const express = require('express');
 require('dotenv').config();
 
-const { getPuuid, getLatestMatchId, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank } = require('./riot');
+const { getPuuid, getLatestMatchIds, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank } = require('./riot');
 const { generateRoast, generateWinRateSummary, generateMultiRoast } = require('./gemini');
 
 // Servidor Health Check para o Railway não derrubar o bot
 const app = express();
-const port = process.env.PORT || 3000;
+const port = parseInt(process.env.PORT, 10) || 3000;
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.listen(port, () => console.log(`Health check server on port ${port}`));
 
@@ -35,7 +36,9 @@ async function loadData() {
 }
 
 async function saveData(data) {
-  await fs.writeJson(DATA_PATH, data, { spaces: 2 });
+  const tmpPath = DATA_PATH + '.tmp.' + process.pid;
+  await fs.writeJson(tmpPath, data, { spaces: 2 });
+  await fs.rename(tmpPath, DATA_PATH);
 }
 
 async function connectToWhatsApp() {
@@ -56,18 +59,14 @@ async function connectToWhatsApp() {
 
     if (qr) {
       console.log('\n--- ESCANEIE O QR CODE ABAIXO ---');
-      qrcode.generate(qr, { small: true }); 
-      
-      const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?data=${encodeURIComponent(qr)}&size=300x300`;
-      console.log('\nOU ACESSE ESTE LINK PARA VER A IMAGEM DO QR CODE:');
-      console.log(qrImageUrl);
+      qrcode.generate(qr, { small: true });
       console.log('---------------------------------\n');
     }
 
     if (connection === 'close') {
       const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Conexão fechada. Reconectando...', shouldReconnect);
-      if (shouldReconnect) connectToWhatsApp();
+      if (shouldReconnect) setTimeout(() => connectToWhatsApp(), 5000);
     } else if (connection === 'open') {
       console.log('WhatsApp Bot conectado (Baileys)!');
       startPolling(sock);
@@ -101,10 +100,10 @@ async function connectToWhatsApp() {
       const input = text.replace(/!player /i, '').trim();
       const parts = input.split('#');
       const gameName = parts[0];
-      const tagLine = parts[1]; // ALTERADO: removido || 'BR1' para não assumir tag errada
+      const tagLine = parts[1];
 
-      if (!tagLine) {
-        await sock.sendMessage(from, { text: `❌ Formato incorreto! Use: !player Nick#Tag\nExemplo: !player Faker#KR1` });
+      if (!gameName || !tagLine || gameName.length > 16 || tagLine.length > 5 || !/^[a-zA-Z0-9\u00C0-\u00FF]+$/.test(gameName) || !/^[a-zA-Z0-9\u00C0-\u00FF]+$/.test(tagLine)) {
+        await sock.sendMessage(from, { text: '❌ Formato inválido! Use: !player Nick#Tag\nExemplo: !player Faker#KR1\n(Apenas letras, números e acentos, máx. 16/5 caracteres)' });
         return;
       }
 
@@ -140,29 +139,29 @@ async function connectToWhatsApp() {
         return;
       }
 
-      await sock.sendMessage(from, { text: "Buscando as últimas partidas de Solo/Duo e ARAM... 🔍" }); // ALTERADO
+      await sock.sendMessage(from, { text: "Buscando as últimas partidas de Ranked, ARAM e TFT... 🔍" });
 
       const losses = [];
       const winners = [];
 
       for (const player of data.players) {
         try {
-          const latestMatchId = await getLatestMatchId(player.puuid);
-          if (!latestMatchId) continue;
+          const latestIds = await getLatestMatchIds(player.puuid);
+          let rank = null;
+          try {
+            rank = await getSummonerRank(player.puuid);
+          } catch (e) {
+            console.log(`Não foi possível obter rank para ${player.name}, continuando sem elo.`);
+          }
 
-          const match = await getMatchDetails(latestMatchId, player.puuid);
-          if (match) {
-            let rank = null;
-            try {
-              rank = await getSummonerRank(player.puuid);
-            } catch (e) {
-              console.log(`Não foi possível obter rank para ${player.name}, continuando sem elo.`);
-            }
-
-            if (!match.win) {
-              losses.push({ name: player.name, match, rank });
-            } else {
-              winners.push(player.name);
+          for (const [queueId, matchId] of Object.entries(latestIds)) {
+            const match = await getMatchDetails(matchId, player.puuid);
+            if (match) {
+              if (!match.win) {
+                losses.push({ name: player.name, match, rank });
+              } else {
+                winners.push(player.name);
+              }
             }
           }
         } catch (err) {
@@ -184,18 +183,18 @@ async function connectToWhatsApp() {
       }
     }
 
-    if (msgBody === '!stats_30') {
+    if (msgBody === '!stats_10') {
       const data = await loadData();
       if (data.players.length === 0) {
         await sock.sendMessage(from, { text: "Nenhum jogador vigiado." });
         return;
       }
 
-      await sock.sendMessage(from, { text: "Analisando as últimas 30 partidas de todos... segura o coração! 📊" });
+      await sock.sendMessage(from, { text: "Analisando as últimas 10 partidas de todos... segura o coração! 📊" });
 
       for (const player of data.players) {
         try {
-          const matchIds = await getMatchHistoryIds(player.puuid, 30);
+          const matchIds = await getMatchHistoryIds(player.puuid, 10);
           if (matchIds.length === 0) continue;
 
           const stats = await getWinRateStats(player.puuid, matchIds);
@@ -204,7 +203,7 @@ async function connectToWhatsApp() {
             await sock.sendMessage(from, { text: `📊 *Relatório de Performance: ${player.name}*\n\n${summary}` });
           }
         } catch (err) {
-          console.error(`Erro no stats_30 para ${player.name}:`, err.message);
+          console.error(`Erro no stats_10 para ${player.name}:`, err.message);
         }
       }
     }
@@ -224,39 +223,62 @@ async function startPolling(sock) {
 
     for (const player of data.players) {
       try {
-        const latestMatchId = await getLatestMatchId(player.puuid);
-        if (!latestMatchId) continue;
+        const latestIds = await getLatestMatchIds(player.puuid);
+        if (Object.keys(latestIds).length === 0) continue;
 
         if (!data.lastMatchIds[player.puuid]) {
-          console.log(`Inicializando match ID para ${player.name}: ${latestMatchId}`);
-          data.lastMatchIds[player.puuid] = latestMatchId;
+          console.log(`Inicializando match IDs para ${player.name}:`, latestIds);
+          data.lastMatchIds[player.puuid] = latestIds;
           await saveData(data);
           continue;
         }
 
         const lastSeen = data.lastMatchIds[player.puuid];
 
-        if (latestMatchId !== lastSeen) {
-          console.log(`Nova partida detectada para ${player.name}: ${latestMatchId}`);
-          const match = await getMatchDetails(latestMatchId, player.puuid);
+        if (typeof lastSeen === 'string') {
+          const migrated = {};
+          for (const [qId, matchId] of Object.entries(latestIds)) {
+            migrated[qId] = matchId;
+          }
+          if (!migrated[420] && lastSeen) migrated[420] = lastSeen;
+          data.lastMatchIds[player.puuid] = migrated;
+        }
 
-          if (match && !match.win) {
-            console.log(`A partida foi uma DERROTA para ${player.name}. Gerando roast...`);
-            let rank = null;
-            try {
-              rank = await getSummonerRank(player.puuid);
-            } catch (e) {
-              console.log("Erro ao buscar rank no polling automático.");
-            }
-            
-            const roast = await generateRoast(player.name, match, rank);
-            await sock.sendMessage(target, { text: roast });
-            console.log(`Roast automático enviado para ${target}`);
+        const currentLastSeen = data.lastMatchIds[player.puuid];
+
+        for (const [queueId, matchId] of Object.entries(latestIds)) {
+          const previousId = currentLastSeen[queueId];
+
+          if (!previousId) {
+            console.log(`Inicializando queue ${queueId} para ${player.name}: ${matchId}`);
+            currentLastSeen[queueId] = matchId;
+            continue;
           }
 
-          data.lastMatchIds[player.puuid] = latestMatchId;
-          await saveData(data);
+          if (matchId !== previousId) {
+            console.log(`Nova partida detectada para ${player.name} (queue ${queueId}): ${matchId}`);
+            const match = await getMatchDetails(matchId, player.puuid);
+
+            if (match && !match.win) {
+              console.log(`A partida foi uma DERROTA para ${player.name}. Gerando roast...`);
+              let rank = null;
+              try {
+                rank = await getSummonerRank(player.puuid);
+              } catch (e) {
+                console.log("Erro ao buscar rank no polling automático.");
+              }
+              
+              const roast = await generateRoast(player.name, match, rank);
+              await sock.sendMessage(target, { text: roast });
+              console.log(`Roast automático enviado para ${target}`);
+            }
+
+            currentLastSeen[queueId] = matchId;
+          }
         }
+
+        data.lastMatchIds[player.puuid] = currentLastSeen;
+        await saveData(data);
       } catch (err) {
         console.error(`Erro no monitoramento de ${player.name}:`, err.message);
       }
