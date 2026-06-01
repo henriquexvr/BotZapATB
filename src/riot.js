@@ -11,6 +11,9 @@ const riotApi = axios.create({
 const QUEUES = {
   RANKED_SOLO: 420,
   ARAM: 450,
+  FLEX_5V5: 440,
+  URF: 1900,
+  ARENA: 1700,
   TFT_NORMAL: 1100,
   TFT_RANKED: 1101
 };
@@ -101,7 +104,7 @@ async function getMatchDetails(matchId, puuid) {
 
 async function getMatchHistoryIds(puuid, count = 10) {
   try {
-    const perQueue = Math.ceil(count / 4) + 1;
+    const perQueue = Math.ceil(count / 7) + 1;
     const queueIds = Object.values(QUEUES);
     const requests = queueIds.map(q =>
       riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${perQueue}&queue=${q}`)
@@ -125,6 +128,9 @@ async function getWinRateStats(puuid, matchIds) {
   const modes = {
     RANKED: { wins: 0, losses: 0 },
     ARAM: { wins: 0, losses: 0 },
+    FLEX: { wins: 0, losses: 0 },
+    URF: { wins: 0, losses: 0 },
+    ARENA: { wins: 0, losses: 0 },
     TFT: { wins: 0, losses: 0 }
   };
 
@@ -152,6 +158,12 @@ async function getWinRateStats(puuid, matchIds) {
           if (win) modes.RANKED.wins++; else modes.RANKED.losses++;
         } else if (queueId === QUEUES.ARAM) {
           if (win) modes.ARAM.wins++; else modes.ARAM.losses++;
+        } else if (queueId === QUEUES.FLEX_5V5) {
+          if (win) modes.FLEX.wins++; else modes.FLEX.losses++;
+        } else if (queueId === QUEUES.URF) {
+          if (win) modes.URF.wins++; else modes.URF.losses++;
+        } else if (queueId === QUEUES.ARENA) {
+          if (win) modes.ARENA.wins++; else modes.ARENA.losses++;
         } else if (queueId === QUEUES.TFT_NORMAL || queueId === QUEUES.TFT_RANKED) {
           if (win) modes.TFT.wins++; else modes.TFT.losses++;
         }

@@ -151,7 +151,7 @@ async function connectToWhatsApp() {
         return;
       }
 
-      await sock.sendMessage(from, { text: "Buscando as últimas partidas de Ranked, ARAM e TFT... 🔍" });
+      await sock.sendMessage(from, { text: "Buscando as últimas partidas de todos os modos... 🔍" });
 
       const losses = [];
       const winners = [];
