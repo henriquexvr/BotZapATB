@@ -6,7 +6,7 @@ const {
   delay
 } = require('@whiskeysockets/baileys');
 const pino = require('pino');
-const qrcode = require('qrcode-terminal');
+const QRCode = require('qrcode');
 const fs = require('fs-extra');
 const path = require('path');
 const os = require('os');
@@ -21,7 +21,17 @@ const app = express();
 const port = parseInt(process.env.PORT, 10) || 3000;
 app.get('/', (req, res) => res.send('Bot is running!'));
 app.get('/ping', (req, res) => res.send('pong'));
+app.get('/qr', async (req, res) => {
+  if (currentQR) {
+    res.setHeader('Content-Type', 'text/html');
+    res.send(`<html><body style="display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#111"><img src="data:image/png;base64,${currentQR}" /></body></html>`);
+  } else {
+    res.send('QR Code não disponível. Aguarde ou escaneie.');
+  }
+});
 app.listen(port, () => console.log(`Health check server on port ${port}`));
+
+let currentQR = null;
 
 // Caminho para a pasta de persistência (Render Disks)
 const PERSIST_PATH = process.env.NODE_ENV === 'production' ? '/app/persist' : path.join(__dirname, '../persist');
@@ -55,20 +65,21 @@ async function connectToWhatsApp() {
 
   sock.ev.on('creds.update', saveCreds);
 
-  sock.ev.on('connection.update', (update) => {
+  sock.ev.on('connection.update', async (update) => {
     const { connection, lastDisconnect, qr } = update;
 
     if (qr) {
-      console.log('\n--- ESCANEIE O QR CODE ABAIXO ---');
-      qrcode.generate(qr, { small: true });
-      console.log('---------------------------------\n');
+      currentQR = await QRCode.toDataURL(qr, { width: 400 });
+      console.log('QR Code gerado! Acesse: https://SEU-APP.onrender.com/qr');
     }
 
     if (connection === 'close') {
+      currentQR = null;
       const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut;
       console.log('Conexão fechada. Reconectando...', shouldReconnect);
       if (shouldReconnect) setTimeout(() => connectToWhatsApp(), 5000);
     } else if (connection === 'open') {
+      currentQR = null;
       console.log('WhatsApp Bot conectado (Baileys)!');
       startPolling(sock);
     }
