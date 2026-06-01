@@ -122,6 +122,11 @@ async function getWinRateStats(puuid, matchIds) {
   let wins = 0;
   let losses = 0;
   const champions = {};
+  const modes = {
+    RANKED: { wins: 0, losses: 0 },
+    ARAM: { wins: 0, losses: 0 },
+    TFT: { wins: 0, losses: 0 }
+  };
 
   try {
     const BATCH_SIZE = 10;
@@ -131,15 +136,25 @@ async function getWinRateStats(puuid, matchIds) {
       const batchResults = await Promise.all(batch.map(async (id) => {
         const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${id}`;
         const resp = await riotApi.get(url);
-        return resp.data.info.participants.find(part => part.puuid === puuid);
+        const participant = resp.data.info.participants.find(part => part.puuid === puuid);
+        return { participant, queueId: resp.data.info.queueId };
       }));
       details.push(...batchResults);
     }
 
-    details.forEach(p => {
-      if (p) {
-        if (p.win) wins++; else losses++;
-        champions[p.championName] = (champions[p.championName] || 0) + 1;
+    details.forEach(({ participant, queueId }) => {
+      if (participant) {
+        const win = participant.win;
+        if (win) wins++; else losses++;
+        champions[participant.championName] = (champions[participant.championName] || 0) + 1;
+
+        if (queueId === QUEUES.RANKED_SOLO) {
+          if (win) modes.RANKED.wins++; else modes.RANKED.losses++;
+        } else if (queueId === QUEUES.ARAM) {
+          if (win) modes.ARAM.wins++; else modes.ARAM.losses++;
+        } else if (queueId === QUEUES.TFT_NORMAL || queueId === QUEUES.TFT_RANKED) {
+          if (win) modes.TFT.wins++; else modes.TFT.losses++;
+        }
       }
     });
 
@@ -150,7 +165,8 @@ async function getWinRateStats(puuid, matchIds) {
       wins,
       losses,
       winRate: ((wins / matchIds.length) * 100).toFixed(1),
-      topChampion: topChampion ? topChampion[0] : 'Desconhecido'
+      topChampion: topChampion ? topChampion[0] : 'Desconhecido',
+      modes
     };
   } catch (error) {
     console.error("Error calculating winrate stats:", error.message);

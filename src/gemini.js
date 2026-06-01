@@ -133,23 +133,50 @@ async function generateRoast(playerName, matchDetails, playerRank = null) {
 }
  
 async function generateWinRateSummary(playerName, stats) {
+  const modes = stats.modes;
+  const rankedTotal = modes.RANKED.wins + modes.RANKED.losses;
+  const aramTotal = modes.ARAM.wins + modes.ARAM.losses;
+  const tftTotal = modes.TFT.wins + modes.TFT.losses;
+
+  const modeLines = [];
+  if (rankedTotal > 0) modeLines.push(`- Ranked Solo/Duo: ${((modes.RANKED.wins / rankedTotal) * 100).toFixed(1)}% (${modes.RANKED.wins}V/${modes.RANKED.losses}D)`);
+  if (aramTotal > 0) modeLines.push(`- ARAM: ${((modes.ARAM.wins / aramTotal) * 100).toFixed(1)}% (${modes.ARAM.wins}V/${modes.ARAM.losses}D)`);
+  if (tftTotal > 0) modeLines.push(`- TFT: ${((modes.TFT.wins / tftTotal) * 100).toFixed(1)}% (${modes.TFT.wins}V/${modes.TFT.losses}D)`);
+
   const prompt = `
-    Aja como um analista de LoL sincero e sarcástico.
-    Meu amigo ${playerName} jogou as últimas ${stats.total} partidas (Ranked, ARAM e TFT combinados).
-    Estatísticas:
+    Aja como um analista de LoL extremamente sarcástico e sem dó.
+    Meu amigo ${playerName} jogou as últimas ${stats.total} partidas.
+
+    Estatísticas gerais:
     - Vitórias: ${stats.wins}
     - Derrotas: ${stats.losses}
-    - Winrate: ${stats.winRate}%
+    - Winrate geral: ${stats.winRate}%
+    - Taxa de DERROTA: ${(100 - parseFloat(stats.winRate)).toFixed(1)}%
     - Campeão mais jogado: ${stats.topChampion}
- 
-    Crie um resumo curto em Português para WhatsApp comentando se ele está carregando ou se ele é o "elo hell" ambulante.
+
+    Porcentagem de vitórias por modo de jogo:
+    ${modeLines.join('\n')}
+
+    Regras:
+    - Compare o desempenho entre os modos. Se o winrate de um modo é muito melhor que outro, zoie a diferença
+    - Se a taxa de derrota é maior que 50%, zoie MUITO — ele é o "elo hell" ambulante
+    - Se perdeu mais no ARAM (que é o modo mais fácil), zoie ainda mais — não tem desculpa
+    - Se tem Ranked com winrate baixo mas ARAM alto (ou vice-versa), comente a ironia
+    - Use gírias de LoL e internet. Seja criativo e impiedoso
+    - Termine com uma conclusão devastadora sobre o nível dele
+
+    Crie um resumo curto (máximo 4-5 parágrafos) em Português para WhatsApp.
   `;
- 
+
   try {
     const result = await model.generateContent(prompt);
     return result.response.text();
   } catch (error) {
-    return `${playerName} tem ${stats.winRate}% de winrate. O gráfico tá parecendo uma ladeira abaixo.`;
+    let fallback = `${playerName} tem ${stats.winRate}% de winrate.\n`;
+    fallback += `Taxa de derrota: ${(100 - parseFloat(stats.winRate)).toFixed(1)}%\n`;
+    if (modeLines.length > 0) fallback += modeLines.join(' | ') + '\n';
+    fallback += `O gráfico tá parecendo uma ladeira abaixo.`;
+    return fallback;
   }
 }
  
