@@ -16,7 +16,11 @@ No tests, linter, or formatter are configured. `npm test` is a no-op placeholder
 - `src/riot.js` — Riot API client. Region hardcoded to `americas`. Tracks LoL queues only: 420 Solo/Duo, 450 ARAM, 440 Flex 5v5, 1900 URF, 1700 Arena. Uses `lol/match/v5/` endpoint. TFT support was removed in 2026-06-04 because the API key lacked scope for the `tft/match/v5/` endpoint.
 - `src/gemini.js` — Gemini AI prompts for generating roasts and win rate summaries. Model: `gemini-2.5-flash`. All output is in Portuguese.
 
-Data persistence: `persist/data.json` (player list + last seen match IDs) and `persist/auth_info_baileys/` (WhatsApp session). Path resolved by `getPersistPath()` in `src/index.js`: uses `PERSIST_PATH` env var if set, otherwise defaults to `__dirname/../persist` (i.e. `./persist`).
+Data persistence: `persist/data.json` (player list + last seen match IDs + `lastRoastAt[puuid]` for cooldown tracking) and `persist/auth_info_baileys/` (WhatsApp session). Path resolved by `getPersistPath()` in `src/index.js`: uses `PERSIST_PATH` env var if set, otherwise defaults to `__dirname/../persist` (i.e. `./persist`).
+
+## Auto-Roast Behavior
+
+The polling loop auto-sends a **single consolidated BOLETIM DA VERGONHA** to `WHATSAPP_TARGET` per poll cycle, listing every loss detected across all monitored players. A `lastRoastAt[puuid]` timestamp per player enforces a `ROAST_COOLDOWN_MS` window so a player who loses 5 times in 5 minutes still gets at most 1 message. If a transient Riot API error causes `getMatchDetails` to return `null`, `lastMatchId` is **not** updated — the next poll retries the same match.
 
 ## Environment Variables
 
@@ -25,6 +29,7 @@ Required in `.env`:
 - `GEMINI_API_KEY` — Google Gemini API key
 - `WHATSAPP_TARGET` — group JID for automatic roast messages (e.g. `120363023306628951@g.us`)
 - `POLLING_INTERVAL` — ms between match checks (default 600000 = 10 min)
+- `ROAST_COOLDOWN_MS` — minimum interval between auto-roasts per player (default 1800000 = 30 min). While in cooldown, new losses are still detected and `lastMatchId` is updated, but no roast is generated.
 
 `WHATSAPP_TARGET` must be set or the polling loop silently does nothing.
 

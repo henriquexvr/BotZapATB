@@ -307,11 +307,19 @@ async function startPolling(sock) {
 
     const data = await loadData();
     const target = process.env.WHATSAPP_TARGET;
+    const cooldownMs = parseInt(process.env.ROAST_COOLDOWN_MS, 10) || 1800000;
+
+    if (!data.lastRoastAt) data.lastRoastAt = {};
 
     if (!target || target === 'COLOCAR_ID_AQUI') {
       console.log('[POLL] WHATSAPP_TARGET nao definido em .env. Pulando.');
       return;
     }
+
+    const pollLosses = [];
+    const roasterdPuuids = new Set();
+    const now = Date.now();
+    let pollHadChanges = false;
 
     for (const player of data.players) {
       try {
@@ -322,58 +330,112 @@ async function startPolling(sock) {
           console.log(`[POLL] Inicializando match IDs para ${player.name}:`, latestIds);
           data.lastMatchIds[player.puuid] = latestIds;
           await saveData(data);
+          pollHadChanges = true;
           continue;
         }
 
-        const lastSeen = data.lastMatchIds[player.puuid];
+        let lastSeen = data.lastMatchIds[player.puuid];
+        let playerHadChanges = false;
 
         if (typeof lastSeen === 'string') {
-          const migrated = {};
-          for (const [qId, matchId] of Object.entries(latestIds)) {
-            migrated[qId] = matchId;
-          }
+          const migrated = { ...latestIds };
           if (!migrated[420] && lastSeen) migrated[420] = lastSeen;
+          console.warn(`[POLL] Migrando lastMatchId legado de ${player.name}: tipo=string, valor=${lastSeen}, assumido como queue 420. Perdas em outras queues podem ter sido silenciosamente ignoradas nesta transicao.`);
           data.lastMatchIds[player.puuid] = migrated;
+          lastSeen = migrated;
+          playerHadChanges = true;
         }
 
-        const currentLastSeen = data.lastMatchIds[player.puuid];
+        const playerLastRoast = data.lastRoastAt[player.puuid] || 0;
+        const inCooldown = (now - playerLastRoast) < cooldownMs;
+        if (inCooldown) {
+          const remaining = Math.round((cooldownMs - (now - playerLastRoast)) / 1000);
+          console.log(`[POLL] Cooldown ativo para ${player.name} (${remaining}s restantes). Roasts pulados; lastMatchId sera atualizado normalmente.`);
+        }
+
+        let rank = null;
+        const playerLosses = [];
 
         for (const [queueId, matchId] of Object.entries(latestIds)) {
-          const previousId = currentLastSeen[queueId];
+          const previousId = lastSeen[queueId];
 
           if (!previousId) {
             console.log(`[POLL] Inicializando queue ${queueId} para ${player.name}: ${matchId}`);
-            currentLastSeen[queueId] = matchId;
+            lastSeen[queueId] = matchId;
+            playerHadChanges = true;
             continue;
           }
 
-          if (matchId !== previousId) {
-            console.log(`[POLL] Nova partida para ${player.name} (queue ${queueId}): ${matchId}`);
-            const match = await getMatchDetails(matchId, player.puuid);
+          if (matchId === previousId) continue;
 
-            if (match && !match.win) {
-              console.log(`[POLL] DERROTA detectada para ${player.name}. Gerando roast...`);
-              let rank = null;
+          console.log(`[POLL] Nova partida para ${player.name} (queue ${queueId}): ${matchId}`);
+          const match = await getMatchDetails(matchId, player.puuid);
+
+          if (match === null) {
+            console.warn(`[POLL] Falha transitoria ao buscar detalhes de ${matchId} para ${player.name}. lastMatchId NAO atualizado; retentativa no proximo poll.`);
+            continue;
+          }
+
+          lastSeen[queueId] = matchId;
+          playerHadChanges = true;
+
+          if (!match.win) {
+            if (inCooldown) {
+              console.log(`[POLL] DERROTA detectada para ${player.name} (queue ${queueId}) mas cooldown ativo. Marcada como vista sem enviar roast.`);
+              continue;
+            }
+
+            console.log(`[POLL] DERROTA detectada para ${player.name} (queue ${queueId}). Adicionada ao boletim consolidado do poll.`);
+            if (rank === null) {
               try {
                 rank = await getSummonerRank(player.puuid);
               } catch (e) {
-                console.log('[POLL] Erro ao buscar rank automatico.');
+                console.log(`[POLL] Erro ao buscar rank automatico para ${player.name}: ${e.message}`);
               }
-
-              const roast = await generateRoast(player.name, match, rank);
-              await sock.sendMessage(target, { text: roast });
-              console.log(`[POLL] Roast automatico enviado para ${target}`);
             }
-
-            currentLastSeen[queueId] = matchId;
+            playerLosses.push({ name: player.name, match, rank });
+          } else {
+            console.log(`[POLL] Vitoria de ${player.name} (queue ${queueId}). Nada a fazer.`);
           }
         }
 
-        data.lastMatchIds[player.puuid] = currentLastSeen;
-        await saveData(data);
+        if (playerLosses.length > 0) {
+          pollLosses.push(...playerLosses);
+          roasterdPuuids.add(player.puuid);
+        }
+
+        data.lastMatchIds[player.puuid] = lastSeen;
+
+        if (playerHadChanges) {
+          await saveData(data);
+          pollHadChanges = true;
+        }
       } catch (err) {
         console.error(`[POLL] Erro monitorando ${player.name}:`, err.message);
       }
+    }
+
+    if (pollLosses.length > 0) {
+      try {
+        const message = await generateMultiRoast(pollLosses);
+        const header = pollLosses.length === 1
+          ? '*BOLETIM DA VERGONHA*'
+          : `*BOLETIM DA VERGONHA* (${pollLosses.length} derrotas no total)`;
+        await sock.sendMessage(target, { text: `${header}\n\n${message}` });
+        console.log(`[POLL] BOLETIM DA VERGONHA enviado para ${target} (${pollLosses.length} derrota(s), ${roasterdPuuids.size} jogador(es))`);
+
+        for (const puuid of roasterdPuuids) {
+          data.lastRoastAt[puuid] = now;
+        }
+        pollHadChanges = true;
+        await saveData(data);
+      } catch (err) {
+        console.error(`[POLL] Erro ao enviar BOLETIM DA VERGONHA:`, err.message);
+      }
+    }
+
+    if (!pollHadChanges) {
+      console.log('[POLL] Poll concluido: nenhuma alteracao detectada.');
     }
   }, process.env.POLLING_INTERVAL || 600000);
 }
