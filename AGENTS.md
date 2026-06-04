@@ -34,7 +34,7 @@ Required in `.env`:
 |---|---|
 | `!player Nick#Tag` | Register a player to monitor. Tag is required (no default). |
 | `!roast_ultimo` | Roast everyone who lost their most recent match. |
-| `!stats_30` | Show win rate summary for last 30 matches per player. |
+| `!stats_10` | Show win rate summary for last 10 matches per player. |
 | `!meu_id` | Print the current chat/group JID. |
 
 ## Gotchas

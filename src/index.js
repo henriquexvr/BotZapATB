@@ -225,18 +225,18 @@ async function connectToWhatsApp() {
       }
     }
 
-    if (msgBody === '!stats_30') {
+    if (msgBody === '!stats_10') {
       const data = await loadData();
       if (data.players.length === 0) {
         await sock.sendMessage(from, { text: "Nenhum jogador vigiado." });
         return;
       }
 
-      await sock.sendMessage(from, { text: "Analisando as ultimas 30 partidas de todos... segura o coracao!" });
+      await sock.sendMessage(from, { text: "Analisando as ultimas 10 partidas de todos... segura o coracao!" });
 
       for (const player of data.players) {
         try {
-          const matchIds = await getMatchHistoryIds(player.puuid, 30);
+          const matchIds = await getMatchHistoryIds(player.puuid, 10);
           if (matchIds.length === 0) continue;
 
           const stats = await getWinRateStats(player.puuid, matchIds);
@@ -245,7 +245,7 @@ async function connectToWhatsApp() {
             await sock.sendMessage(from, { text: `*Relatorio de Performance: ${player.name}*\n\n${summary}` });
           }
         } catch (err) {
-          console.error(`[!stats_30] Erro para ${player.name}:`, err.message);
+          console.error(`[!stats_10] Erro para ${player.name}:`, err.message);
         }
       }
     }

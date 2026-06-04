@@ -10,7 +10,7 @@ Construido com **@whiskeysockets/baileys** (headless, sem Chromium), **Riot API*
 |---|---|---|
 | `!player Nick#Tag` | Registra um jogador para monitoramento | `!player Faker#KR1` |
 | `!roast_ultimo` | Gera "Boletim da Vergonha" com zoeiras para quem perdeu | `!roast_ultimo` |
-| `!stats_30` | Mostra winrate das ultimas 30 partidas por jogador | `!stats_30` |
+| `!stats_10` | Mostra winrate das ultimas 10 partidas por jogador | `!stats_10` |
 | `!meu_id` | Retorna o JID do chat/grupo (use para descobrir o `WHATSAPP_TARGET`) | `!meu_id` |
 
 ## Modos monitorados
