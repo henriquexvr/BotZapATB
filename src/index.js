@@ -39,9 +39,16 @@ httpServer = app.listen(port, () => {
   console.log(`[HTTP] Health check server ouvindo em :${port}`);
 });
 
-const PERSIST_PATH = process.env.NODE_ENV === 'production' ? '/app/persist' : path.join(__dirname, '../persist');
+function getPersistPath() {
+  if (process.env.PERSIST_PATH && process.env.PERSIST_PATH.trim() !== '') {
+    return process.env.PERSIST_PATH;
+  }
+  return path.join(__dirname, '../persist');
+}
+const PERSIST_PATH = getPersistPath();
 if (!fs.existsSync(PERSIST_PATH)) fs.mkdirSync(PERSIST_PATH, { recursive: true });
 const DATA_PATH = path.join(PERSIST_PATH, 'data.json');
+console.log(`[PERSIST] Diretorio de dados: ${PERSIST_PATH}`);
 
 async function loadData() {
   if (await fs.pathExists(DATA_PATH)) {

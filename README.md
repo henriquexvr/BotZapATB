@@ -46,7 +46,8 @@ Copie `.env.example` para `.env` e preencha:
 | `WHATSAPP_TARGET` | Sim | JID do grupo WhatsApp destino dos roasts automaticos |
 | `POLLING_INTERVAL` | Nao | Intervalo em ms entre checagens (padrao: `600000` = 10 min) |
 | `PORT` | Nao | Porta do health check HTTP (padrao: `3000`) |
-| `NODE_ENV` | Nao | Se `production`, usa `/app/persist` como path de persistencia |
+| `NODE_ENV` | Nao | Apenas informativo (aparece no `pm2 list`) |
+| `PERSIST_PATH` | Nao | Caminho customizado para a pasta de persistencia. Se vazio, usa `<projeto>/persist` |
 
 > **Como descobrir o `WHATSAPP_TARGET`:** adicione o bot ao grupo, envie `!meu_id` no grupo e copie o JID retornado (formato `1203630xxxxxxxxx@g.us`).
 
@@ -173,7 +174,7 @@ ecosystem.config.js   — Config PM2 (max_memory_restart, node_args, logs)
 
 - `persist/data.json` — lista de jogadores + ultimo match ID por jogador/fila
 - `persist/auth_info_baileys/` — credenciais WhatsApp (criado no primeiro scan)
-- Em producao (`NODE_ENV=production`), path e `/app/persist`; caso contrario, `./persist`
+- Por padrao, a pasta `persist/` fica na raiz do projeto (mesmo nivel que `package.json`). Para customizar (ex: colocar em `/var/lib/...` ou em um volume Docker), defina `PERSIST_PATH` na `.env`.
 
 ## Estabilidade / Ciclo de vida
 
