@@ -54,12 +54,19 @@ async function getLatestMatchIds(puuid) {
     const requests = queueIds.map(q =>
       riotApi.get(matchListUrl(puuid, q, 1, 0))
     );
-    const results = await Promise.all(requests);
+    const results = await Promise.allSettled(requests);
 
     const latest = {};
     results.forEach((res, i) => {
-      if (res.data && res.data.length > 0) {
-        latest[queueIds[i]] = res.data[0];
+      const q = queueIds[i];
+      if (res.status === 'fulfilled') {
+        if (res.value.data && res.value.data.length > 0) {
+          latest[q] = res.value.data[0];
+        }
+      } else {
+        const status = res.reason?.response?.status;
+        const msg = res.reason?.message || 'unknown';
+        console.warn(`[RIOT] Falha ao buscar queue ${q} para ${puuid}: HTTP ${status || '?'} (${msg})`);
       }
     });
 
@@ -145,12 +152,18 @@ async function getMatchHistoryIds(puuid, count = 10) {
     const requests = queueIds.map(q =>
       riotApi.get(matchListUrl(puuid, q, perQueue, 0))
     );
-    const results = await Promise.all(requests);
+    const results = await Promise.allSettled(requests);
 
     const all = [];
     results.forEach((res, i) => {
       const q = queueIds[i];
-      res.data.forEach(matchId => all.push({ matchId, queueId: q }));
+      if (res.status === 'fulfilled') {
+        res.value.data.forEach(matchId => all.push({ matchId, queueId: q }));
+      } else {
+        const status = res.reason?.response?.status;
+        const msg = res.reason?.message || 'unknown';
+        console.warn(`[RIOT] Falha ao buscar queue ${q} para ${puuid}: HTTP ${status || '?'} (${msg})`);
+      }
     });
     all.sort((a, b) => parseInt(b.matchId.split('_').pop()) - parseInt(a.matchId.split('_').pop()));
     return all.slice(0, count);
