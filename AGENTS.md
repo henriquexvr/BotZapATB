@@ -13,7 +13,7 @@ No tests, linter, or formatter are configured. `npm test` is a no-op placeholder
 ## Architecture
 
 - `src/index.js` — entry point. WhatsApp connection, message handling, polling loop, Express health check.
-- `src/riot.js` — Riot API client. Region hardcoded to `americas`. Tracks LoL queues (420 Solo/Duo, 450 ARAM, 440 Flex 5v5, 1900 URF, 1700 Arena) and TFT queues (1100 Normal, 1101 Ranked). LoL and TFT use separate endpoints (`lol/match/v5/` and `tft/match/v5/`).
+- `src/riot.js` — Riot API client. Region hardcoded to `americas`. Tracks LoL queues only: 420 Solo/Duo, 450 ARAM, 440 Flex 5v5, 1900 URF, 1700 Arena. Uses `lol/match/v5/` endpoint. TFT support was removed in 2026-06-04 because the API key lacked scope for the `tft/match/v5/` endpoint.
 - `src/gemini.js` — Gemini AI prompts for generating roasts and win rate summaries. Model: `gemini-2.5-flash`. All output is in Portuguese.
 
 Data persistence: `persist/data.json` (player list + last seen match IDs) and `persist/auth_info_baileys/` (WhatsApp session). Path resolved by `getPersistPath()` in `src/index.js`: uses `PERSIST_PATH` env var if set, otherwise defaults to `__dirname/../persist` (i.e. `./persist`).

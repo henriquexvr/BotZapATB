@@ -15,10 +15,6 @@ const model = genAI.getGenerativeModel({
   safetySettings 
 });
 
-function isTFT(matchDetails) {
-  return matchDetails.gameMode === 'TFT' || matchDetails.queueId === 1100 || matchDetails.queueId === 1101;
-}
-
 function isARAM(matchDetails) {
   return matchDetails.gameMode === 'ARAM' || matchDetails.queueId === 450;
 }
@@ -42,47 +38,7 @@ function isRankedSolo(matchDetails) {
 async function generateRoast(playerName, matchDetails, playerRank = null) {
   let contextRank = "";
   if (playerRank) {
-    const queueLabel = playerRank.queueType === 'RANKED_TFT' ? 'TFT' : 'Solo/Duo';
-    contextRank = `- Elo Atual (${queueLabel}): ${playerRank.tier} ${playerRank.rank} (${playerRank.lp} LP)`;
-  }
-
-  if (isTFT(matchDetails)) {
-    const placement = matchDetails.placement;
-    const augmentsList = matchDetails.augments?.length > 0 ? matchDetails.augments.join(', ') : 'Nenhum';
-    const traitsList = matchDetails.traits?.length > 0 ? matchDetails.traits.join(', ') : 'Nenhuma';
-    const unitsList = matchDetails.units?.length > 0 ? matchDetails.units.join(', ') : 'Nenhum';
-
-    const prompt = `
-      Aja como um comentarista de TFT extremamente sarcástico e cruel.
-      Meu amigo ${playerName} acabou de jogar uma partida de Teamfight Tactics e ficou em ${placement}º lugar!
-      Detalhes da partida:
-      - Posição final: ${placement}º lugar
-      - Augments escolhidos: ${augmentsList}
-      - Traits ativos: ${traitsList}
-      - Units no time: ${unitsList}
-      - Dano total causado: ${matchDetails.totalDamage}
-      - Gold sobrando: ${matchDetails.goldLeft}
-      ${contextRank}
-
-      Zoie MUITO ele por ter ficado em ${placement}º lugar. Temas para usar:
-      - Ficou em Top ${placement} = ${placement >= 7 ? 'vergonha total, não serviu pra nada' : 'ainda assim é ruim'}
-      - Provavelmente forçou uma composição que não funcionou e não soube ser flexível
-      - Os augments que ele escolheu devem ser uma piada, não soube buildar nada
-      - Deve estar culpando o RNG (sorte) ao invés de admitir que é ruim
-      - Perdeu pra gente que jogava no celular no banheiro
-      - Se for 8º lugar, zoie ainda mais — é o pior resultado possível
-
-      Crie uma mensagem curta (máximo 2-3 parágrafos) em Português para WhatsApp.
-      Use gírias de TFT e internet. Seja criativo e impiedoso. Comece com algo impactante.
-    `;
-
-    try {
-      const result = await model.generateContent(prompt);
-      return result.response.text();
-    } catch (error) {
-      console.error("Gemini TFT Roast Error:", error.message);
-      return `🎮 TOP ${placement} (${playerName}): Ficou em ${placement}º lugar de TFT! Units: ${unitsList}. O cara é o rei do bottom 4!`;
-    }
+    contextRank = `- Elo Atual (Solo/Duo): ${playerRank.tier} ${playerRank.rank} (${playerRank.lp} LP)`;
   }
 
   if (isARAM(matchDetails)) {
@@ -261,7 +217,6 @@ async function generateWinRateSummary(playerName, stats) {
   const modes = stats.modes;
   const rankedTotal = modes.RANKED.wins + modes.RANKED.losses;
   const aramTotal = modes.ARAM.wins + modes.ARAM.losses;
-  const tftTotal = modes.TFT.wins + modes.TFT.losses;
   const flexTotal = modes.FLEX.wins + modes.FLEX.losses;
   const arenaTotal = modes.ARENA.wins + modes.ARENA.losses;
   const urfTotal = modes.URF.wins + modes.URF.losses;
@@ -272,7 +227,6 @@ async function generateWinRateSummary(playerName, stats) {
   if (flexTotal > 0) modeLines.push(`- Flex 5v5: ${((modes.FLEX.wins / flexTotal) * 100).toFixed(1)}% (${modes.FLEX.wins}V/${modes.FLEX.losses}D)`);
   if (arenaTotal > 0) modeLines.push(`- Arena: ${((modes.ARENA.wins / arenaTotal) * 100).toFixed(1)}% (${modes.ARENA.wins}V/${modes.ARENA.losses}D)`);
   if (urfTotal > 0) modeLines.push(`- URF: ${((modes.URF.wins / urfTotal) * 100).toFixed(1)}% (${modes.URF.wins}V/${modes.URF.losses}D)`);
-  if (tftTotal > 0) modeLines.push(`- TFT: ${((modes.TFT.wins / tftTotal) * 100).toFixed(1)}% (${modes.TFT.wins}V/${modes.TFT.losses}D)`);
 
   const prompt = `
     Aja como um analista de LoL extremamente sarcástico e sem dó.
@@ -319,7 +273,6 @@ async function generateMultiRoast(playerDataList) {
   playerDataList.forEach(p => {
     let gameModeName = 'Ranked Solo/Duo';
     if (p.match.gameMode === 'ARAM') gameModeName = 'ARAM';
-    else if (p.match.gameMode === 'TFT') gameModeName = `TFT (Top ${p.match.placement || '?'})`;
     else if (p.match.queueId === 440) gameModeName = 'Flex 5v5';
     else if (p.match.queueId === 1700) gameModeName = 'Arena';
     else if (p.match.queueId === 1900) gameModeName = 'URF';
@@ -327,36 +280,26 @@ async function generateMultiRoast(playerDataList) {
     context += `- Jogador: ${p.name}\n`;
     context += `  Modo: ${gameModeName}\n`;
     context += `  Elo: ${p.rank ? `${p.rank.tier} ${p.rank.rank} (${p.rank.lp} LP)` : 'Unranked'}\n`;
-
-    if (p.match.gameMode === 'TFT') {
-      context += `  Posição: ${p.match.placement}º lugar\n`;
-      context += `  Units: ${p.match.units?.join(', ') || 'N/A'}\n`;
-      context += `  Augments: ${p.match.augments?.join(', ') || 'N/A'}\n`;
-      context += `  Traits: ${p.match.traits?.join(', ') || 'N/A'}\n\n`;
-    } else {
-      context += `  Campeão: ${p.match.champion}\n`;
-      context += `  KDA: ${p.match.kda}\n`;
-      context += `  Oponente: ${p.match.opponentChampion}\n`;
-      context += `  Dano causado: ${p.match.damage}\n\n`;
-    }
+    context += `  Campeão: ${p.match.champion}\n`;
+    context += `  KDA: ${p.match.kda}\n`;
+    context += `  Oponente: ${p.match.opponentChampion}\n`;
+    context += `  Dano causado: ${p.match.damage}\n\n`;
   });
  
   const prompt = `
     Aja como um comentarista de eSports extremamente sarcástico, ácido e engraçado.
-    Abaixo estão detalhes de jogadores que perderam suas partidas (Ranked, ARAM, TFT, Flex, Arena ou URF).
-    
+    Abaixo estão detalhes de jogadores que perderam suas partidas (Ranked, ARAM, Flex, Arena ou URF).
+
     ${context}
- 
-    Crie uma única mensagem para WhatsApp consolidando a zoeira para todos esses jogadores. 
+
+    Crie uma única mensagem para WhatsApp consolidando a zoeira para todos esses jogadores.
     A mensagem deve ser um "boletim da vergonha".
     Regras especiais:
     - Se alguém perdeu no ARAM, zoie o dobro — não tem desculpa nenhuma pra perder no ARAM, é só apertar botão
     - Se alguém perdeu no URF, zoie ainda mais — todo mundo é overpowered menos ele
     - Se alguém perdeu no Arena, zoie por não conseguir nem se divertir vencendo
     - Se alguém perdeu no Flex, zoie por ter time organizado e ainda assim perder
-    - Se alguém ficou em Top 8 no TFT, zoie ainda mais — é o pior resultado, ficou em último
-    - Se alguém ficou entre 5º e 8º no TFT, zoie por estar no "bottom 4"
-    - Compare o desempenho entre eles, use gírias de LoL e TFT
+    - Compare o desempenho entre eles, use gírias de LoL
     - Zoie o elo deles e como conseguiram perder nessas condições
     A mensagem deve ser impactante e curta.
   `;
