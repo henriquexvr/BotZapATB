@@ -8,15 +8,34 @@ const riotApi = axios.create({
   headers: { 'X-Riot-Token': API_KEY }
 });
 
-const QUEUES = {
+const LOL_QUEUES = {
   RANKED_SOLO: 420,
   ARAM: 450,
   FLEX_5V5: 440,
   URF: 1900,
-  ARENA: 1700,
+  ARENA: 1700
+};
+
+const TFT_QUEUES = {
   TFT_NORMAL: 1100,
   TFT_RANKED: 1101
 };
+
+const ALL_QUEUES = { ...LOL_QUEUES, ...TFT_QUEUES };
+
+function isTftQueue(queueId) {
+  return Object.values(TFT_QUEUES).includes(queueId);
+}
+
+function matchListUrl(puuid, queueId, count, start = 0) {
+  const base = isTftQueue(queueId) ? 'tft/match/v5' : 'lol/match/v5';
+  return `https://${REGION}.api.riotgames.com/${base}/matches/by-puuid/${puuid}/ids?start=${start}&count=${count}&queue=${queueId}`;
+}
+
+function matchDetailUrl(matchId, queueId) {
+  const base = isTftQueue(queueId) ? 'tft/match/v5' : 'lol/match/v5';
+  return `https://${REGION}.api.riotgames.com/${base}/matches/${matchId}`;
+}
 
 async function getPuuid(gameName, tagLine) {
   try {
@@ -31,9 +50,9 @@ async function getPuuid(gameName, tagLine) {
 
 async function getLatestMatchIds(puuid) {
   try {
-    const queueIds = Object.values(QUEUES);
+    const queueIds = Object.values(ALL_QUEUES);
     const requests = queueIds.map(q =>
-      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=1&queue=${q}`)
+      riotApi.get(matchListUrl(puuid, q, 1, 0))
     );
     const results = await Promise.all(requests);
 
@@ -51,30 +70,47 @@ async function getLatestMatchIds(puuid) {
   }
 }
 
-async function getMatchDetails(matchId, puuid) {
+async function getMatchDetails(matchId, puuid, queueId = null) {
   try {
-    const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${matchId}`;
-    const response = await riotApi.get(url);
+    let response;
+    if (queueId) {
+      const url = matchDetailUrl(matchId, queueId);
+      response = await riotApi.get(url);
+    } else {
+      try {
+        const lolUrl = matchDetailUrl(matchId, 420);
+        response = await riotApi.get(lolUrl);
+      } catch (e) {
+        if (e.response?.status === 404) {
+          const tftUrl = matchDetailUrl(matchId, 1100);
+          response = await riotApi.get(tftUrl);
+        } else {
+          throw e;
+        }
+      }
+    }
+
     const info = response.data.info;
     const participant = info.participants.find(p => p.puuid === puuid);
 
     if (!participant) return null;
 
-    const queueId = info.queueId;
+    const effectiveQueueId = queueId || info.queueId;
+    const isTft = isTftQueue(effectiveQueueId);
 
-    if (queueId === QUEUES.TFT_NORMAL || queueId === QUEUES.TFT_RANKED) {
+    if (isTft) {
       return {
         matchId,
         win: participant.placement <= 4,
         placement: participant.placement,
-        champion: participant.characters?.[0]?.character_name || 'Desconhecido',
+        champion: participant.units?.[0]?.character_name || 'Desconhecido',
         augments: participant.augments || [],
         traits: (participant.traits || []).map(t => `${t.name} (${t.num_units})`),
         totalDamage: participant.total_damage_to_players || 0,
         goldLeft: participant.gold_left || 0,
         units: (participant.units || []).map(u => u.character_name),
         gameMode: 'TFT',
-        queueId,
+        queueId: effectiveQueueId,
         timestamp: info.gameEndTimestamp
       };
     }
@@ -93,7 +129,7 @@ async function getMatchDetails(matchId, puuid) {
       gold: participant.goldEarned,
       damage: participant.totalDamageDealtToChampions,
       gameMode: info.gameMode,
-      queueId,
+      queueId: effectiveQueueId,
       timestamp: info.gameEndTimestamp
     };
   } catch (error) {
@@ -105,15 +141,18 @@ async function getMatchDetails(matchId, puuid) {
 async function getMatchHistoryIds(puuid, count = 10) {
   try {
     const perQueue = Math.ceil(count / 7) + 1;
-    const queueIds = Object.values(QUEUES);
+    const queueIds = Object.values(ALL_QUEUES);
     const requests = queueIds.map(q =>
-      riotApi.get(`https://${REGION}.api.riotgames.com/lol/match/v5/matches/by-puuid/${puuid}/ids?start=0&count=${perQueue}&queue=${q}`)
+      riotApi.get(matchListUrl(puuid, q, perQueue, 0))
     );
     const results = await Promise.all(requests);
 
     const all = [];
-    results.forEach(res => all.push(...res.data));
-    all.sort((a, b) => parseInt(b.split('_')[1]) - parseInt(a.split('_')[1]));
+    results.forEach((res, i) => {
+      const q = queueIds[i];
+      res.data.forEach(matchId => all.push({ matchId, queueId: q }));
+    });
+    all.sort((a, b) => parseInt(b.matchId.split('_').pop()) - parseInt(a.matchId.split('_').pop()));
     return all.slice(0, count);
   } catch (error) {
     console.error(`Error getting match history for ${puuid}:`, error.message);
@@ -139,34 +178,39 @@ async function getWinRateStats(puuid, matchIds) {
     const details = [];
     for (let i = 0; i < matchIds.length; i += BATCH_SIZE) {
       const batch = matchIds.slice(i, i + BATCH_SIZE);
-      const batchResults = await Promise.all(batch.map(async (id) => {
-        const url = `https://${REGION}.api.riotgames.com/lol/match/v5/matches/${id}`;
-        const resp = await riotApi.get(url);
-        const participant = resp.data.info.participants.find(part => part.puuid === puuid);
-        return { participant, queueId: resp.data.info.queueId };
+      const batchResults = await Promise.all(batch.map(async ({ matchId, queueId }) => {
+        const resp = await riotApi.get(matchDetailUrl(matchId, queueId));
+        const info = resp.data.info;
+        const participant = info.participants.find(part => part.puuid === puuid);
+        return { participant, queueId: info.queueId };
       }));
       details.push(...batchResults);
     }
 
     details.forEach(({ participant, queueId }) => {
-      if (participant) {
-        const win = participant.win;
-        if (win) wins++; else losses++;
-        champions[participant.championName] = (champions[participant.championName] || 0) + 1;
+      if (!participant) return;
 
-        if (queueId === QUEUES.RANKED_SOLO) {
-          if (win) modes.RANKED.wins++; else modes.RANKED.losses++;
-        } else if (queueId === QUEUES.ARAM) {
-          if (win) modes.ARAM.wins++; else modes.ARAM.losses++;
-        } else if (queueId === QUEUES.FLEX_5V5) {
-          if (win) modes.FLEX.wins++; else modes.FLEX.losses++;
-        } else if (queueId === QUEUES.URF) {
-          if (win) modes.URF.wins++; else modes.URF.losses++;
-        } else if (queueId === QUEUES.ARENA) {
-          if (win) modes.ARENA.wins++; else modes.ARENA.losses++;
-        } else if (queueId === QUEUES.TFT_NORMAL || queueId === QUEUES.TFT_RANKED) {
-          if (win) modes.TFT.wins++; else modes.TFT.losses++;
-        }
+      const isTft = isTftQueue(queueId);
+      const win = isTft ? participant.placement <= 4 : participant.win;
+      if (win) wins++; else losses++;
+
+      const displayName = isTft
+        ? (participant.units?.[0]?.character_name || 'TFT')
+        : participant.championName;
+      champions[displayName] = (champions[displayName] || 0) + 1;
+
+      if (queueId === LOL_QUEUES.RANKED_SOLO) {
+        if (win) modes.RANKED.wins++; else modes.RANKED.losses++;
+      } else if (queueId === LOL_QUEUES.ARAM) {
+        if (win) modes.ARAM.wins++; else modes.ARAM.losses++;
+      } else if (queueId === LOL_QUEUES.FLEX_5V5) {
+        if (win) modes.FLEX.wins++; else modes.FLEX.losses++;
+      } else if (queueId === LOL_QUEUES.URF) {
+        if (win) modes.URF.wins++; else modes.URF.losses++;
+      } else if (queueId === LOL_QUEUES.ARENA) {
+        if (win) modes.ARENA.wins++; else modes.ARENA.losses++;
+      } else if (isTft) {
+        if (win) modes.TFT.wins++; else modes.TFT.losses++;
       }
     });
 

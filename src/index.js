@@ -197,7 +197,7 @@ async function connectToWhatsApp() {
           }
 
           for (const [queueId, matchId] of Object.entries(latestIds)) {
-            const match = await getMatchDetails(matchId, player.puuid);
+            const match = await getMatchDetails(matchId, player.puuid, parseInt(queueId));
             if (match) {
               if (!match.win) {
                 losses.push({ name: player.name, match, rank });
@@ -306,7 +306,7 @@ async function startPolling(sock) {
 
           if (matchId !== previousId) {
             console.log(`[POLL] Nova partida para ${player.name} (queue ${queueId}): ${matchId}`);
-            const match = await getMatchDetails(matchId, player.puuid);
+            const match = await getMatchDetails(matchId, player.puuid, parseInt(queueId));
 
             if (match && !match.win) {
               console.log(`[POLL] DERROTA detectada para ${player.name}. Gerando roast...`);
