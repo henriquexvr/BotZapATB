@@ -13,6 +13,49 @@ const path = require('path');
 const express = require('express');
 require('dotenv').config();
 
+const FILTERED_LOG_PATTERNS = [
+  'Closing session:',
+  'Bad MAC Error',
+  'Failed to decrypt message',
+  'Session error:Error: Bad MAC'
+];
+const FILTERED_LOG_WINDOW_MS = 60000;
+const FILTERED_LOG_MAX_PER_PATTERN = 2;
+
+const _filteredCounts = new Map();
+function _filterKey(msg) {
+  const s = String(msg ?? '');
+  for (const p of FILTERED_LOG_PATTERNS) {
+    if (s.includes(p)) return p;
+  }
+  return null;
+}
+function _shouldFilter(msg) {
+  const key = _filterKey(msg);
+  if (!key) return false;
+  const now = Date.now();
+  const entry = _filteredCounts.get(key) || { count: 0, firstAt: now, lastSummaryAt: 0 };
+  if (now - entry.firstAt > FILTERED_LOG_WINDOW_MS) {
+    entry.count = 0;
+    entry.firstAt = now;
+    entry.lastSummaryAt = 0;
+  }
+  entry.count += 1;
+  _filteredCounts.set(key, entry);
+  if (entry.count <= FILTERED_LOG_MAX_PER_PATTERN) return true;
+  if (now - entry.lastSummaryAt > FILTERED_LOG_WINDOW_MS) {
+    entry.lastSummaryAt = now;
+    process.stdout.write(`[LOG-FILTER] ${key} suppressed (${entry.count}+ hits in last ${Math.round((now - entry.firstAt)/1000)}s)\n`);
+  }
+  return true;
+}
+const _origLog = console.log.bind(console);
+const _origErr = console.error.bind(console);
+const _origWarn = console.warn.bind(console);
+console.log = (...args) => { if (!_shouldFilter(args[0])) _origLog(...args); };
+console.error = (...args) => { if (!_shouldFilter(args[0])) _origErr(...args); };
+console.warn = (...args) => { if (!_shouldFilter(args[0])) _origWarn(...args); };
+
 const { getPuuid, getLatestMatchIds, getMatchDetails, getMatchHistoryIds, getWinRateStats, getSummonerRank } = require('./riot');
 const { generateRoast, generateWinRateSummary, generateMultiRoast } = require('./gemini');
 
@@ -197,7 +240,7 @@ async function connectToWhatsApp() {
           }
 
           for (const [queueId, matchId] of Object.entries(latestIds)) {
-            const match = await getMatchDetails(matchId, player.puuid, parseInt(queueId));
+            const match = await getMatchDetails(matchId, player.puuid);
             if (match) {
               if (!match.win) {
                 losses.push({ name: player.name, match, rank });
@@ -306,7 +349,7 @@ async function startPolling(sock) {
 
           if (matchId !== previousId) {
             console.log(`[POLL] Nova partida para ${player.name} (queue ${queueId}): ${matchId}`);
-            const match = await getMatchDetails(matchId, player.puuid, parseInt(queueId));
+            const match = await getMatchDetails(matchId, player.puuid);
 
             if (match && !match.win) {
               console.log(`[POLL] DERROTA detectada para ${player.name}. Gerando roast...`);
