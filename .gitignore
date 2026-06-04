@@ -3,6 +3,7 @@ auth_info_baileys
 tokens
 data.json
 persist/
+logs/
 .env
 test_riot.js
 *.log

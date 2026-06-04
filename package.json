@@ -1,13 +1,24 @@
 {
-  "name": "bot-lol",
+  "name": "atb-lol-bot",
   "version": "1.0.0",
-  "description": "",
+  "description": "WhatsApp bot que monitora partidas de LoL e gera roasts via Gemini",
   "main": "src/index.js",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "start": "node src/index.js",
+    "pm2:start": "pm2 start ecosystem.config.js --env production",
+    "pm2:stop": "pm2 stop atb-lol-bot",
+    "pm2:restart": "pm2 restart atb-lol-bot",
+    "pm2:reload": "pm2 reload atb-lol-bot",
+    "pm2:logs": "pm2 logs atb-lol-bot",
+    "pm2:delete": "pm2 delete atb-lol-bot",
+    "pm2:save": "pm2 save",
+    "pm2:monit": "pm2 monit",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
-  "keywords": [],
+  "keywords": ["whatsapp", "bot", "league-of-legends", "riot-api", "gemini"],
   "author": "",
   "license": "ISC",
   "type": "commonjs",
